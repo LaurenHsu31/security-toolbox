@@ -1,0 +1,11 @@
+# Go build / test artifacts
+*.test
+*.out
+/security-toolbox
+backend/security-toolbox
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
