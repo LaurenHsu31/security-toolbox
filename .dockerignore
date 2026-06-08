@@ -1,0 +1,9 @@
+# Keep local dependencies and build output out of the build context. The image
+# rebuilds the frontend from source (npm ci + vite) and embeds it, so sending
+# these only slows the build and risks clobbering the Linux install with
+# host-platform binaries (e.g. a Windows/macOS node_modules).
+**/node_modules
+frontend/dist
+backend/web
+.git
+.DS_Store

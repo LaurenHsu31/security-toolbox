@@ -3,11 +3,13 @@
 # ---- Stage 1: build the Vue frontend ----
 FROM node:22-alpine AS frontend
 WORKDIR /app/frontend
-# Copy the lockfile too and use `npm ci` for a deterministic install that
-# matches package-lock.json exactly (reproducible across machines).
-COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
+# Copy sources first, then run `npm ci`. Running it AFTER the copy is deliberate:
+# npm ci deletes any node_modules that rode along (e.g. when the tree is
+# folder-copied instead of git-cloned, a Windows/macOS node_modules would
+# otherwise shadow vite and break the Linux build) and reinstalls deterministically
+# from package-lock.json.
 COPY frontend/ ./
+RUN npm ci
 RUN npm run build
 
 # ---- Stage 2: build the Go binary with the frontend embedded ----
