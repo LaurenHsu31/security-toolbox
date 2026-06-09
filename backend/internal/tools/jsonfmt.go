@@ -55,6 +55,20 @@ func handleJSON(raw json.RawMessage) (any, error) {
 		if err := json.Indent(&buf, src, "", strings.Repeat(" ", indent)); err != nil {
 			return nil, err
 		}
+		// Also hand back the parsed value so the UI can render a collapsible
+		// tree. UseNumber keeps integers/decimals exact instead of float64.
+		dec := json.NewDecoder(bytes.NewReader(src))
+		dec.UseNumber()
+		var parsed any
+		if err := dec.Decode(&parsed); err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"valid":     true,
+			"mode":      mode,
+			"formatted": buf.String(),
+			"parsed":    parsed,
+		}, nil
 	}
 	return map[string]any{
 		"valid":     true,

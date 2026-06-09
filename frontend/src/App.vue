@@ -3,7 +3,9 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { listTools, runTool, type ToolMeta } from './api'
 import { toolUI } from './toolsMeta'
 import { loadFavorites, saveFavorites, toggleFavorite, moveFavorite, reconcile } from './prefs'
+import { copyText } from './clipboard'
 import ResultView from './components/ResultView.vue'
+import JsonTree from './components/JsonTree.vue'
 
 const tools = ref<ToolMeta[]>([])
 const activeName = ref<string>('')
@@ -62,6 +64,15 @@ const monoOutput = computed(() => {
   return null
 })
 
+// When a result carries a `parsed` value (the JSON formatter in beautify mode),
+// render it as a collapsible tree instead of a flat string.
+const hasJsonTree = computed(
+  () => !!result.value && typeof result.value === 'object' && 'parsed' in (result.value as object)
+)
+const jsonTreeValue = computed(() =>
+  hasJsonTree.value ? (result.value as Record<string, unknown>).parsed : undefined
+)
+
 function selectTool(name: string) {
   activeName.value = name
   inputValue.value = ''
@@ -108,12 +119,20 @@ function scheduleRun() {
 
 watch([inputValue, controlValues], scheduleRun, { deep: true })
 
+const copied = ref(false)
+function resultText(): string {
+  const r = result.value
+  if (r && typeof r === 'object') {
+    const f = (r as Record<string, unknown>).formatted
+    if (typeof f === 'string') return f
+  }
+  return monoOutput.value ?? JSON.stringify(r, null, 2)
+}
 async function copyAll() {
-  const text = monoOutput.value ?? JSON.stringify(result.value, null, 2)
-  try {
-    await navigator.clipboard.writeText(text)
-  } catch {
-    /* ignore */
+  const ok = await copyText(resultText())
+  if (ok) {
+    copied.value = true
+    setTimeout(() => (copied.value = false), 1200)
   }
 }
 
@@ -233,10 +252,14 @@ onMounted(async () => {
               v-if="result && !errorMsg"
               class="ghost"
               @click="copyAll"
-            >Copy all</button>
+            >{{ copied ? 'Copied!' : 'Copy all' }}</button>
           </div>
 
           <div v-if="errorMsg" class="card error">{{ errorMsg }}</div>
+
+          <div v-else-if="hasJsonTree" class="card">
+            <JsonTree :value="jsonTreeValue" />
+          </div>
 
           <div v-else-if="monoOutput !== null" class="card">
             <pre class="code">{{ monoOutput }}</pre>

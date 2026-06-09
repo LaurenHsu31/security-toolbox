@@ -98,6 +98,33 @@ func TestCSRMangledMarkers(t *testing.T) {
 	}
 }
 
+func TestCertEscapedAndSingleLine(t *testing.T) {
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	tmpl := x509.Certificate{
+		SerialNumber: big.NewInt(7),
+		Subject:      pkix.Name{CommonName: "oneline.example"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clean := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+
+	cases := map[string]string{
+		"literal \\n escapes": strings.ReplaceAll(clean, "\n", `\n`),
+		"all on one line":     strings.ReplaceAll(clean, "\n", ""),
+		"literal \\r\\n":      strings.ReplaceAll(clean, "\n", `\r\n`),
+	}
+	for name, input := range cases {
+		out := run(t, handleCert, map[string]any{"input": input})
+		if cn := out["subject"].(map[string]any)["commonName"]; cn != "oneline.example" {
+			t.Errorf("%s: CN = %v", name, cn)
+		}
+	}
+}
+
 func TestCertDecode(t *testing.T) {
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	tmpl := x509.Certificate{
@@ -173,6 +200,14 @@ func TestJSONBeautify(t *testing.T) {
 	}
 	if _, ok := out["formatted"].(string); !ok {
 		t.Fatal("expected formatted string")
+	}
+	// beautify also returns the parsed value for the collapsible tree view.
+	parsed, ok := out["parsed"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected parsed object, got %T", out["parsed"])
+	}
+	if _, ok := parsed["a"]; !ok {
+		t.Errorf("parsed should contain key a: %v", parsed)
 	}
 	if _, err := handleJSON(mustJSON(t, map[string]any{"input": `{"a":}`})); err == nil {
 		t.Error("expected error for invalid JSON")

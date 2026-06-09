@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { reactive } from 'vue'
+import { copyText } from '../clipboard'
 
 interface Asn1Node {
   class?: string
@@ -38,11 +39,7 @@ function tagClass(n: Asn1Node): string {
   return ''
 }
 async function copy(text: string) {
-  try {
-    await navigator.clipboard.writeText(text)
-  } catch {
-    /* clipboard may be unavailable; ignore */
-  }
+  await copyText(text)
 }
 </script>
 
@@ -132,6 +129,8 @@ async function copy(text: string) {
   color: var(--text);
   word-break: break-all;
   cursor: copy;
+  user-select: text;
+  -webkit-user-select: text;
   border-radius: 4px;
   padding: 0 3px;
   margin: 0 -3px;

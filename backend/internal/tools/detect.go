@@ -17,6 +17,20 @@ var (
 	// or were normalized from Unicode dashes. The trailing space is what real
 	// base64 (which has no spaces) won't accidentally contain.
 	beginRE = regexp.MustCompile(`(?i)-+\s*BEGIN[ \t]`)
+	// Matches a BEGIN/END marker (any dash count) so the base64 body can be
+	// recovered even when the whole PEM is on a single line.
+	pemMarkerRE = regexp.MustCompile(`(?i)-+\s*(?:BEGIN|END)[^-]*-+`)
+)
+
+// literalEscapes turns literal "\n" / "\r" / "\t" two-character escape
+// sequences (the way a PEM looks after being embedded in JSON or a log line)
+// into real whitespace. base64/hex/PEM never legitimately contain a backslash,
+// so this is safe to apply to any input.
+var literalEscapes = strings.NewReplacer(
+	`\r\n`, "\n",
+	`\n`, "\n",
+	`\r`, "\n",
+	`\t`, " ",
 )
 
 // normalizeDashes rewrites Unicode dash/hyphen variants (en/em dash,
@@ -35,19 +49,17 @@ func normalizeDashes(s string) string {
 }
 
 // lenientPEMBody recovers the base64 payload from PEM-ish text whose markers are
-// malformed (wrong dash count, stray characters) so pem.Decode rejected it. It
-// drops any BEGIN/END/dash lines and base64-decodes what remains.
+// malformed (wrong dash count, stray characters) or whose whole content sits on
+// a single line, so pem.Decode rejected it. It strips the BEGIN/END markers and
+// any dashes/whitespace, then base64-decodes what remains.
 func lenientPEMBody(s string) ([]byte, bool) {
+	stripped := pemMarkerRE.ReplaceAllString(s, "")
 	var b strings.Builder
-	for _, line := range strings.Split(s, "\n") {
-		up := strings.ToUpper(line)
-		if strings.Contains(up, "BEGIN") || strings.Contains(up, "END") {
-			continue
-		}
-		for _, r := range line {
-			if r != '-' && !unicode.IsSpace(r) {
-				b.WriteRune(r)
-			}
+	for _, r := range stripped {
+		// PEM bodies are standard base64 (never base64url), so a stray '-' can
+		// only be a leftover marker dash — drop it.
+		if r != '-' && !unicode.IsSpace(r) {
+			b.WriteRune(r)
 		}
 	}
 	compact := b.String()
@@ -71,7 +83,7 @@ func lenientPEMBody(s string) ([]byte, bool) {
 // expectPEMType, when non-empty (e.g. "CERTIFICATE REQUEST"), is only used to
 // pick the right block when several PEM blocks are present.
 func DecodeToDER(input, expectPEMType string) (der []byte, format string, err error) {
-	trimmed := strings.TrimSpace(normalizeDashes(input))
+	trimmed := strings.TrimSpace(normalizeDashes(literalEscapes.Replace(input)))
 	if trimmed == "" {
 		return nil, "", errors.New("input is empty")
 	}

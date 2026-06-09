@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import Asn1Tree from './Asn1Tree.vue'
+import { copyText } from '../clipboard'
 
 defineProps<{ value: unknown; depth?: number }>()
 
@@ -36,11 +37,7 @@ function leafClass(v: unknown): string {
   return ''
 }
 async function copy(v: unknown) {
-  try {
-    await navigator.clipboard.writeText(leafText(v))
-  } catch {
-    /* clipboard may be unavailable; ignore */
-  }
+  await copyText(leafText(v))
 }
 function humanKey(k: string): string {
   return k
@@ -57,16 +54,14 @@ function humanKey(k: string): string {
         <div class="key">{{ humanKey(String(k)) }}</div>
         <div class="val">
           <ResultView v-if="isObject(v) || isArray(v)" :value="v" :depth="(depth || 0) + 1" />
-          <button
+          <span
             v-else
             class="leaf"
             :class="leafClass(v)"
-            type="button"
-            title="Click to copy"
+            title="Click to copy (or select to copy manually)"
             @click="copy(v)"
+            >{{ leafText(v) }}</span
           >
-            {{ leafText(v) }}
-          </button>
         </div>
       </div>
     </template>
@@ -77,24 +72,20 @@ function humanKey(k: string): string {
       <ul class="list">
         <li v-for="(v, i) in value" :key="i">
           <ResultView v-if="isObject(v) || isArray(v)" :value="v" :depth="(depth || 0) + 1" />
-          <button
+          <span
             v-else
             class="leaf"
             :class="leafClass(v)"
-            type="button"
-            title="Click to copy"
+            title="Click to copy (or select to copy manually)"
             @click="copy(v)"
+            >{{ leafText(v) }}</span
           >
-            {{ leafText(v) }}
-          </button>
         </li>
       </ul>
     </template>
 
     <template v-else>
-      <button class="leaf" :class="leafClass(value)" type="button" @click="copy(value)">
-        {{ leafText(value) }}
-      </button>
+      <span class="leaf" :class="leafClass(value)" title="Click to copy" @click="copy(value)">{{ leafText(value) }}</span>
     </template>
   </div>
 </template>
@@ -151,8 +142,7 @@ function humanKey(k: string): string {
   border-radius: 8px;
 }
 .leaf {
-  border: none;
-  background: transparent;
+  display: inline-block;
   color: var(--text);
   font-size: 14px;
   text-align: left;
@@ -163,6 +153,10 @@ function humanKey(k: string): string {
   white-space: pre-wrap;
   transition: background 0.15s ease;
   max-width: 100%;
+  /* Allow drag-selecting the value for manual copy, while click still copies. */
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: copy;
 }
 .leaf:hover {
   background: rgba(0, 113, 227, 0.1);
