@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import Asn1Tree from './Asn1Tree.vue'
 import { copyText } from '../clipboard'
 
@@ -36,9 +37,17 @@ function leafClass(v: unknown): string {
   if (looksMono(v)) return 'mono'
   return ''
 }
-async function copy(v: unknown) {
-  await copyText(leafText(v))
+
+const copiedKey = ref<string | null>(null)
+let copiedTimer: ReturnType<typeof setTimeout> | undefined
+async function copy(v: unknown, key: string) {
+  if (await copyText(leafText(v))) {
+    copiedKey.value = key
+    clearTimeout(copiedTimer)
+    copiedTimer = setTimeout(() => (copiedKey.value = null), 1000)
+  }
 }
+
 function humanKey(k: string): string {
   return k
     .replace(/([A-Z])/g, ' $1')
@@ -57,9 +66,9 @@ function humanKey(k: string): string {
           <span
             v-else
             class="leaf"
-            :class="leafClass(v)"
+            :class="[leafClass(v), { copied: copiedKey === String(k) }]"
             title="Click to copy (or select to copy manually)"
-            @click="copy(v)"
+            @click="copy(v, String(k))"
             >{{ leafText(v) }}</span
           >
         </div>
@@ -75,9 +84,9 @@ function humanKey(k: string): string {
           <span
             v-else
             class="leaf"
-            :class="leafClass(v)"
+            :class="[leafClass(v), { copied: copiedKey === `#${i}` }]"
             title="Click to copy (or select to copy manually)"
-            @click="copy(v)"
+            @click="copy(v, `#${i}`)"
             >{{ leafText(v) }}</span
           >
         </li>
@@ -85,7 +94,13 @@ function humanKey(k: string): string {
     </template>
 
     <template v-else>
-      <span class="leaf" :class="leafClass(value)" title="Click to copy" @click="copy(value)">{{ leafText(value) }}</span>
+      <span
+        class="leaf"
+        :class="[leafClass(value), { copied: copiedKey === 'root' }]"
+        title="Click to copy"
+        @click="copy(value, 'root')"
+        >{{ leafText(value) }}</span
+      >
     </template>
   </div>
 </template>
@@ -117,6 +132,13 @@ function humanKey(k: string): string {
 .row.nested > .val {
   padding-left: 12px;
   border-left: 2px solid var(--border);
+}
+/* On narrow screens the fixed key column wastes half the width — stack. */
+@media (max-width: 560px) {
+  .row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
 }
 .key {
   color: var(--label);
@@ -160,6 +182,14 @@ function humanKey(k: string): string {
 }
 .leaf:hover {
   background: rgba(0, 113, 227, 0.1);
+}
+.leaf.copied {
+  background: rgba(48, 209, 88, 0.18);
+}
+.leaf.copied::after {
+  content: ' ✓ Copied';
+  font-size: 11px;
+  color: var(--ok);
 }
 .leaf.mono {
   font-family: var(--mono);

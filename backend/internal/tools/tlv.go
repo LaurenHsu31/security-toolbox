@@ -69,13 +69,24 @@ func parseTLV(data []byte, depth int) ([]map[string]any, error) {
 			length = int(l0)
 		} else {
 			n := int(l0 & 0x7f)
+			if n == 0 {
+				return nil, errors.New("indefinite length (0x80) is not supported")
+			}
+			if n > 4 {
+				return nil, fmt.Errorf("length field of %d bytes is too long", n)
+			}
 			if i+n > len(data) {
 				return nil, errors.New("truncated length")
 			}
+			var l uint64
 			for k := 0; k < n; k++ {
-				length = length<<8 | int(data[i])
+				l = l<<8 | uint64(data[i])
 				i++
 			}
+			if l > uint64(len(data)-i) {
+				return nil, fmt.Errorf("value length %d exceeds remaining bytes", l)
+			}
+			length = int(l)
 		}
 		if i+length > len(data) {
 			return nil, fmt.Errorf("value length %d exceeds remaining bytes", length)
@@ -127,7 +138,7 @@ func parseAPDUCommand(b []byte) (any, error) {
 		out["case"] = "1 (no data, no response expected)"
 	case len(b) == 5:
 		out["case"] = "2 (no data, Le present)"
-		out["le"] = int(b[4])
+		out["le"] = apduLe(b[4])
 	default:
 		lc := int(b[4])
 		if 5+lc > len(b) {
@@ -137,7 +148,7 @@ func parseAPDUCommand(b []byte) (any, error) {
 		out["data"] = strings.ToUpper(hex.EncodeToString(b[5 : 5+lc]))
 		if rem := b[5+lc:]; len(rem) == 1 {
 			out["case"] = "4 (data + Le)"
-			out["le"] = int(rem[0])
+			out["le"] = apduLe(rem[0])
 		} else {
 			out["case"] = "3 (data, no Le)"
 		}
@@ -175,3 +186,12 @@ func parseAPDUResponse(b []byte) (any, error) {
 }
 
 func hexByte(b byte) string { return fmt.Sprintf("%02X", b) }
+
+// apduLe interprets a short-form Le byte: 0x00 means "up to 256 bytes"
+// (ISO 7816-4), not zero.
+func apduLe(b byte) int {
+	if b == 0 {
+		return 256
+	}
+	return int(b)
+}

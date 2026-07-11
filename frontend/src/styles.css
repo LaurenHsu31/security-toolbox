@@ -12,6 +12,7 @@
   --ok: #248a3d; /* systemGreen */
   --bad: #d70015; /* systemRed */
   --num: #5e5ce6; /* systemIndigo */
+  --str: #0a84c4; /* cyan-tinted string values */
   --string: #1d1d1f;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue",
@@ -20,8 +21,12 @@
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.05);
 }
 
+/* Dark palette. Applied when the system prefers dark (unless the user forced
+   light via the theme toggle), or when the user forced dark. The variables are
+   duplicated because CSS cannot combine a media query and a selector in one
+   rule — keep both blocks in sync. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --accent: #0a84ff; /* brighter on dark, per Apple dark-mode systemBlue */
     --bg: #000000;
     --surface: #1c1c1e;
@@ -33,9 +38,34 @@
     --ok: #30d158;
     --bad: #ff453a;
     --num: #7d7aff;
+    --str: #64d2ff; /* systemCyan dark */
     --string: #f5f5f7;
     --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
   }
+}
+
+:root[data-theme="dark"] {
+  --accent: #0a84ff;
+  --bg: #000000;
+  --surface: #1c1c1e;
+  --surface-2: #161618;
+  --border: #38383a;
+  --text: #f5f5f7;
+  --text-2: #98989d;
+  --label: #9db4ff;
+  --ok: #30d158;
+  --bad: #ff453a;
+  --num: #7d7aff;
+  --str: #64d2ff;
+  --string: #f5f5f7;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
 }
 
 * {

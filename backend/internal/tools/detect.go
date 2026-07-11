@@ -115,8 +115,8 @@ func DecodeToDER(input, expectPEMType string) (der []byte, format string, err er
 
 	// Pure hex (even length) is treated as hex; this almost never collides with
 	// real base64 of binary, which contains non-hex characters or padding.
-	if len(compact)%2 == 0 && hexOnly.MatchString(compact) {
-		if b, e := hex.DecodeString(compact); e == nil {
+	if h := strip0x(compact); len(h)%2 == 0 && hexOnly.MatchString(h) {
+		if b, e := hex.DecodeString(h); e == nil {
 			return b, "Hex", nil
 		}
 	}
@@ -146,10 +146,14 @@ func decodeFlexibleBytes(input, inputFormat string) ([]byte, string, error) {
 	case "utf8", "text":
 		return []byte(input), "UTF-8", nil
 	case "hex":
-		b, e := hex.DecodeString(wsRE.ReplaceAllString(input, ""))
+		b, e := hex.DecodeString(strip0x(wsRE.ReplaceAllString(input, "")))
 		return b, "Hex", e
 	case "base64":
-		b, e := base64.StdEncoding.DecodeString(wsRE.ReplaceAllString(input, ""))
+		compact := wsRE.ReplaceAllString(input, "")
+		if b, e := base64.StdEncoding.DecodeString(compact); e == nil {
+			return b, "Base64", nil
+		}
+		b, e := base64.RawStdEncoding.DecodeString(compact)
 		return b, "Base64", e
 	case "base64url":
 		b, e := base64.RawURLEncoding.DecodeString(strings.TrimRight(wsRE.ReplaceAllString(input, ""), "="))
@@ -157,16 +161,27 @@ func decodeFlexibleBytes(input, inputFormat string) ([]byte, string, error) {
 	}
 	// auto
 	compact := wsRE.ReplaceAllString(strings.TrimSpace(input), "")
-	if len(compact)%2 == 0 && len(compact) > 0 && hexOnly.MatchString(compact) {
-		if b, e := hex.DecodeString(compact); e == nil {
+	if h := strip0x(compact); len(h)%2 == 0 && len(h) > 0 && hexOnly.MatchString(h) {
+		if b, e := hex.DecodeString(h); e == nil {
 			return b, "Hex", nil
 		}
 	}
 	if b, e := base64.StdEncoding.DecodeString(compact); e == nil {
 		return b, "Base64", nil
 	}
+	if b, e := base64.RawStdEncoding.DecodeString(compact); e == nil {
+		return b, "Base64 (unpadded)", nil
+	}
 	if b, e := base64.RawURLEncoding.DecodeString(strings.TrimRight(compact, "=")); e == nil {
 		return b, "Base64URL", nil
 	}
 	return []byte(input), "UTF-8", nil
+}
+
+// strip0x removes a leading "0x"/"0X" so pasted hex like 0xdeadbeef decodes.
+func strip0x(s string) string {
+	if len(s) > 2 && (strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X")) {
+		return s[2:]
+	}
+	return s
 }

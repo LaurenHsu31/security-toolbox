@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
+	"time"
 )
 
 func handleASN1(raw json.RawMessage) (any, error) {
@@ -107,10 +108,33 @@ func interpretPrimitive(rv asn1.RawValue) any {
 		if isPrintable(rv.Bytes) {
 			return string(rv.Bytes)
 		}
+	case 23, 24: // UTCTime / GeneralizedTime
+		if isPrintable(rv.Bytes) {
+			s := string(rv.Bytes)
+			if t, err := parseASN1Time(rv.Tag, s); err == nil {
+				return s + " (" + t.UTC().Format(time.RFC3339) + ")"
+			}
+			return s
+		}
 	case 5: // NULL
 		return nil
 	}
 	return nil
+}
+
+func parseASN1Time(tag int, s string) (time.Time, error) {
+	layouts := []string{"20060102150405Z0700", "20060102150405Z", "200601021504Z"}
+	if tag == 23 {
+		layouts = []string{"060102150405Z0700", "060102150405Z", "0601021504Z"}
+	}
+	var err error
+	for _, l := range layouts {
+		var t time.Time
+		if t, err = time.Parse(l, s); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, err
 }
 
 func isPrintable(b []byte) bool {

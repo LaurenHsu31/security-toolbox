@@ -133,23 +133,32 @@ func toUint64(v any) uint64 {
 
 func (d *cborDecoder) readBytes(ai byte, depth int) ([]byte, error) {
 	if ai == 31 { // indefinite-length
+		if depth > 64 {
+			return nil, errors.New("CBOR nesting too deep")
+		}
+		// Chunks are raw definite-length strings; read their headers directly so
+		// byte-string chunks are concatenated as bytes (decode() would render
+		// them as "h'…'" display strings).
 		var out []byte
 		for {
 			if d.pos >= len(d.data) {
 				return nil, errors.New("unterminated indefinite-length string")
 			}
-			if d.data[d.pos] == 0xff {
+			hb := d.data[d.pos]
+			if hb == 0xff {
 				d.pos++
 				break
 			}
-			chunk, err := d.decode(depth + 1)
+			mt, cai := hb>>5, hb&0x1f
+			if (mt != 2 && mt != 3) || cai == 31 {
+				return nil, errors.New("indefinite-length string chunks must be definite-length strings")
+			}
+			d.pos++
+			chunk, err := d.readBytes(cai, depth+1)
 			if err != nil {
 				return nil, err
 			}
-			switch c := chunk.(type) {
-			case string:
-				out = append(out, []byte(c)...)
-			}
+			out = append(out, chunk...)
 		}
 		return out, nil
 	}
@@ -157,10 +166,11 @@ func (d *cborDecoder) readBytes(ai byte, depth int) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	ln := int(toUint64(n))
-	if d.pos+ln > len(d.data) {
+	u := toUint64(n)
+	if u > uint64(len(d.data)-d.pos) {
 		return nil, errors.New("byte/text length exceeds data")
 	}
+	ln := int(u)
 	out := d.data[d.pos : d.pos+ln]
 	d.pos += ln
 	return out, nil

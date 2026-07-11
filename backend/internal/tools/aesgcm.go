@@ -27,7 +27,7 @@ type aesGCMInput struct {
 	TagFormat   string `json:"tagFormat"`
 	AAD         string `json:"aad"`
 	AADFormat   string `json:"aadFormat"`
-	TagLen      int    `json:"tagLen"` // tag size in bytes (default 16)
+	TagLen      flexInt `json:"tagLen"` // tag size in bytes (default 16)
 }
 
 func newGCM(key, nonce []byte, tagLen int) (cipher.AEAD, error) {
@@ -83,7 +83,7 @@ func handleAESGCM(raw json.RawMessage) (any, error) {
 			return nil, fmt.Errorf("aad: %w", err)
 		}
 	}
-	gcm, err := newGCM(key, nonce, in.TagLen)
+	gcm, err := newGCM(key, nonce, int(in.TagLen))
 	if err != nil {
 		return nil, err
 	}

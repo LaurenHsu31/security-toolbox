@@ -32,13 +32,28 @@ MB) with the frontend embedded inside it.
 | Encoding | ASN.1 / DER tree dump · Base64 / Hex / Base64URL · OID lookup |
 | Smartcard | BER-TLV · ISO 7816-4 APDU command / response |
 
-Most certificate tools auto-detect whether the input is PEM, raw DER in
-Base64, or hex.
+Most tools auto-detect the input format: PEM (even mangled by copy-paste,
+single-lined, or with literal `\n` escapes), raw DER in Base64 (padded or
+not), hex with or without a `0x` prefix. Every tool has a **Use sample**
+button that fills a known-good input — together with any control values it
+needs (e.g. the JWT sample's HMAC secret) — so you can see the expected
+output instantly.
 
-**Favorites.** Hover any tool in the sidebar and tap the ☆ to pin it; pinned
-tools collect in a **Favorites** group at the top, which you can **drag to
-reorder**. Your selection is saved in the browser's `localStorage` — it stays on
-your machine (no server, no account) and survives reloads.
+### Working with the UI
+
+- **Search.** Filter the sidebar with the search box — press `/` or
+  `Cmd/Ctrl+K` from anywhere to jump to it.
+- **Favorites.** Hover any tool and tap the ☆ to pin it; pinned tools collect
+  in a **Favorites** group at the top, which you can **drag to reorder**.
+- **Drop files.** Drag a file onto the input card: text files load as-is,
+  binary files (e.g. a raw DER certificate) are converted to Base64.
+- **Copy anything.** Click any value in a result to copy it (a ✓ confirms);
+  **Copy all** grabs the whole result. Trees support **Expand / Collapse all**
+  and full keyboard navigation.
+- **It remembers.** Your input is kept per tool while you switch around, and
+  the last-used tool, theme (Auto / Light / Dark toggle in the top bar) and
+  favorites are saved in the browser's `localStorage` — everything stays on
+  your machine (no server, no account) and survives reloads.
 
 > **Digital car key note.** Cross-checked against the CCC Digital Key Technical
 > Specification v4.0.0 (CCC-TS-101). The primitives the spec actually relies on
@@ -56,8 +71,9 @@ your machine (no server, no account) and survives reloads.
 - **No outbound connections.** CSP is `default-src 'self'; connect-src 'self'`,
   so even a compromised page cannot exfiltrate your data.
 - **No persistence.** Inputs are processed in memory and discarded; there is no
-  database and nothing is logged. The only thing stored is your favorite-tool
-  ordering, kept in the browser's own `localStorage` — never sent anywhere.
+  database and nothing is logged. The only things stored are UI preferences
+  (favorites, theme, last-used tool), kept in the browser's own
+  `localStorage` — never sent anywhere.
 - **Single origin.** Frontend and API are served by the same Go binary on one
   port.
 - **Minimal surface.** The backend uses only the Go standard library — zero
@@ -107,6 +123,10 @@ cd frontend && npm run test:unit
 docker compose up --build -d
 cd frontend && npm run test:e2e
 ```
+
+The e2e suite includes a guard that clicks **Use sample** on every tool and
+fails if any sample stops decoding — run it after touching samples, control
+defaults, or backend handlers.
 
 See [TEST_PLAN.md](./TEST_PLAN.md) for the full strategy, including
 cross-checking the backend against `openssl`.

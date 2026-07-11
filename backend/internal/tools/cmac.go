@@ -18,7 +18,7 @@ type cmacInput struct {
 	KeyFormat string `json:"keyFormat"` // hex|base64|auto
 	Input     string `json:"input"`     // message
 	From      string `json:"from"`      // utf8|hex|base64|auto
-	TagLen    int    `json:"tagLen"`    // optional truncation, in bytes (1..16)
+	TagLen    flexInt `json:"tagLen"`    // optional truncation, in bytes (1..16)
 }
 
 // rbConst is the SP 800-38B constant for a 128-bit block.
@@ -113,8 +113,8 @@ func handleCMAC(raw json.RawMessage) (any, error) {
 		"tagHex":             hex.EncodeToString(tag),
 		"tagBase64":          base64.StdEncoding.EncodeToString(tag),
 	}
-	if in.TagLen > 0 && in.TagLen < len(tag) {
-		out["truncatedTagHex"] = hex.EncodeToString(tag[:in.TagLen])
+	if n := int(in.TagLen); n > 0 && n < len(tag) {
+		out["truncatedTagHex"] = hex.EncodeToString(tag[:n])
 	}
 	return out, nil
 }

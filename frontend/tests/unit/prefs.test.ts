@@ -4,7 +4,9 @@ import {
   saveFavorites,
   toggleFavorite,
   moveFavorite,
-  reconcile
+  reconcile,
+  loadTheme,
+  saveTheme
 } from '../../src/prefs'
 
 describe('prefs', () => {
@@ -42,5 +44,15 @@ describe('prefs', () => {
 
   it('reconcile drops unknown names but keeps order', () => {
     expect(reconcile(['x', 'cmac', 'y', 'hkdf'], ['hkdf', 'cmac'])).toEqual(['cmac', 'hkdf'])
+  })
+
+  it('round-trips the theme, defaulting to auto', () => {
+    expect(loadTheme()).toBe('auto')
+    saveTheme('dark')
+    expect(loadTheme()).toBe('dark')
+    saveTheme('auto')
+    expect(loadTheme()).toBe('auto')
+    localStorage.setItem('security-toolbox:theme', 'garbage')
+    expect(loadTheme()).toBe('auto')
   })
 })

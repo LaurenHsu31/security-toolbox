@@ -23,7 +23,7 @@ type hkdfInput struct {
 	SaltFormat string `json:"saltFormat"`
 	Info       string `json:"info"`
 	InfoFormat string `json:"infoFormat"`
-	Length     int    `json:"length"`
+	Length     flexInt `json:"length"`
 	Hash       string `json:"hash"` // SHA-256 | SHA-384 | SHA-512
 }
 
@@ -70,7 +70,7 @@ func handleHKDF(raw json.RawMessage) (any, error) {
 		}
 	}
 
-	length := in.Length
+	length := int(in.Length)
 	if length <= 0 {
 		length = hashLen
 	}

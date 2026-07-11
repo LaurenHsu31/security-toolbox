@@ -1,22 +1,29 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, provide, reactive, ref, watch } from 'vue'
 import { listTools, runTool, type ToolMeta } from './api'
 import { toolUI } from './toolsMeta'
-import { loadFavorites, saveFavorites, toggleFavorite, moveFavorite, reconcile } from './prefs'
+import {
+  loadFavorites, saveFavorites, toggleFavorite, moveFavorite, reconcile,
+  loadTheme, saveTheme, loadLastTool, saveLastTool, type Theme
+} from './prefs'
 import { copyText } from './clipboard'
 import ResultView from './components/ResultView.vue'
 import JsonTree from './components/JsonTree.vue'
+import Logo from './components/Logo.vue'
 
 const tools = ref<ToolMeta[]>([])
 const activeName = ref<string>('')
 const inputValue = ref<string>('')
 const controlValues = reactive<Record<string, string>>({})
+const revealed = reactive<Record<string, boolean>>({})
 const result = ref<unknown>(null)
 const errorMsg = ref<string>('')
 const loading = ref<boolean>(false)
 const loadError = ref<string>('')
 const favorites = ref<string[]>(loadFavorites())
 const dragIndex = ref<number | null>(null)
+const query = ref<string>('')
+const searchBox = ref<HTMLInputElement | null>(null)
 
 const activeTool = computed(() => tools.value.find((t) => t.name === activeName.value))
 const ui = computed(() => toolUI[activeName.value])
@@ -32,6 +39,22 @@ const grouped = computed(() => {
     map[t.category].push(t)
   }
   return order.map((category) => ({ category, items: map[category] }))
+})
+
+const filteredGrouped = computed(() => {
+  const q = query.value.trim().toLowerCase()
+  if (!q) return grouped.value
+  return grouped.value
+    .map((g) => ({
+      category: g.category,
+      items: g.items.filter(
+        (t) =>
+          t.title.toLowerCase().includes(q) ||
+          t.name.toLowerCase().includes(q) ||
+          t.description.toLowerCase().includes(q)
+      )
+    }))
+    .filter((g) => g.items.length > 0)
 })
 
 const favoriteTools = computed(() =>
@@ -55,6 +78,31 @@ function onDrop(to: number) {
 
 watch(favorites, (v) => saveFavorites(v))
 
+// Manual theme override; 'auto' follows the OS via prefers-color-scheme.
+const theme = ref<Theme>(loadTheme())
+const themeLabel = computed(
+  () => ({ auto: '◐ Auto', light: '☀ Light', dark: '☾ Dark' })[theme.value]
+)
+function cycleTheme() {
+  theme.value = theme.value === 'auto' ? 'light' : theme.value === 'light' ? 'dark' : 'auto'
+}
+watch(
+  theme,
+  (t) => {
+    saveTheme(t)
+    if (t === 'auto') delete document.documentElement.dataset.theme
+    else document.documentElement.dataset.theme = t
+  },
+  { immediate: true }
+)
+
+// "Expand all / Collapse all" broadcast consumed by JsonTree / Asn1Tree.
+const treeControl = ref<{ mode: 'expand' | 'collapse'; seq: number } | null>(null)
+provide('treeControl', treeControl)
+function setAllTrees(mode: 'expand' | 'collapse') {
+  treeControl.value = { mode, seq: (treeControl.value?.seq ?? 0) + 1 }
+}
+
 const monoOutput = computed(() => {
   const key = ui.value?.monoOutputKey
   if (key && result.value && typeof result.value === 'object') {
@@ -73,9 +121,20 @@ const jsonTreeValue = computed(() =>
   hasJsonTree.value ? (result.value as Record<string, unknown>).parsed : undefined
 )
 
+const hasResult = computed(() => !!result.value && !errorMsg.value)
+const showTreeButtons = computed(() => hasResult.value && (hasJsonTree.value || monoOutput.value === null))
+
+// Keep what the user typed per tool, so switching to look something up and
+// back doesn't lose the pasted input. The result re-runs from the restored
+// input via the debounced watcher.
+const savedInputs: Record<string, { input: string; controls: Record<string, string> }> = {}
+
 function selectTool(name: string) {
+  if (name === activeName.value) return
+  if (activeName.value) {
+    savedInputs[activeName.value] = { input: inputValue.value, controls: { ...controlValues } }
+  }
   activeName.value = name
-  inputValue.value = ''
   result.value = null
   errorMsg.value = ''
   for (const k of Object.keys(controlValues)) delete controlValues[k]
@@ -83,10 +142,53 @@ function selectTool(name: string) {
   spec?.controls?.forEach((c) => {
     controlValues[c.key] = c.default ?? ''
   })
+  const saved = savedInputs[name]
+  if (saved) Object.assign(controlValues, saved.controls)
+  inputValue.value = saved?.input ?? ''
 }
 
 function fillSample() {
-  if (ui.value?.sample) inputValue.value = ui.value.sample
+  if (!ui.value?.sample) return
+  // Some samples only decode with matching control values (e.g. the JWT
+  // sample's HMAC secret, the ECDH sample's peer key).
+  if (ui.value.sampleControls) Object.assign(controlValues, ui.value.sampleControls)
+  inputValue.value = ui.value.sample
+}
+
+function clearInput() {
+  inputValue.value = ''
+  result.value = null
+  errorMsg.value = ''
+}
+
+// Dropping a file onto the input card loads it: text files as-is, binary
+// files (e.g. DER certificates) as Base64, which every decoder accepts.
+const dragOver = ref(false)
+async function onFileDrop(e: DragEvent) {
+  dragOver.value = false
+  const f = e.dataTransfer?.files?.[0]
+  if (!f) return
+  if (f.size > 2 * 1024 * 1024) {
+    errorMsg.value = 'Dropped file is larger than 2 MB.'
+    return
+  }
+  const buf = new Uint8Array(await f.arrayBuffer())
+  let text: string | null = null
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(buf)
+  } catch {
+    /* binary */
+  }
+  // Control characters mean "binary that happens to be valid UTF-8".
+  if (text !== null && !/[\x00-\x08\x0e-\x1f]/.test(text)) {
+    inputValue.value = text.trim()
+  } else {
+    let bin = ''
+    for (let i = 0; i < buf.length; i += 0x8000) {
+      bin += String.fromCharCode(...buf.subarray(i, i + 0x8000))
+    }
+    inputValue.value = btoa(bin)
+  }
 }
 
 async function run() {
@@ -136,14 +238,35 @@ async function copyAll() {
   }
 }
 
+// "/" or Cmd/Ctrl+K focuses the sidebar search from anywhere (except while
+// already typing in a field).
+function onKeydown(e: KeyboardEvent) {
+  const el = document.activeElement as HTMLElement | null
+  const typing =
+    !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)
+  if ((e.key === '/' && !typing) || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k')) {
+    e.preventDefault()
+    searchBox.value?.focus()
+    searchBox.value?.select()
+  }
+}
+
 onMounted(async () => {
+  window.addEventListener('keydown', onKeydown)
   try {
     tools.value = await listTools()
     favorites.value = reconcile(favorites.value, tools.value.map((t) => t.name))
-    if (tools.value.length) selectTool(tools.value[0].name)
+    const last = loadLastTool()
+    const start = tools.value.find((t) => t.name === last) ?? tools.value[0]
+    if (start) selectTool(start.name)
   } catch (e) {
     loadError.value = e instanceof Error ? e.message : String(e)
   }
+})
+onUnmounted(() => window.removeEventListener('keydown', onKeydown))
+
+watch(activeName, (n) => {
+  if (n) saveLastTool(n)
 })
 </script>
 
@@ -151,12 +274,15 @@ onMounted(async () => {
   <div class="shell">
     <header class="topbar">
       <div class="brand">
-        <span class="logo">◍</span>
+        <Logo :size="22" />
         <span class="name">security-toolbox</span>
       </div>
-      <span class="pill" title="The page is locked to its own origin by Content-Security-Policy.">
-        Runs entirely on your machine · nothing is uploaded
-      </span>
+      <div class="topbar-right">
+        <span class="pill" title="The page is locked to its own origin by Content-Security-Policy.">
+          Runs entirely on your machine · nothing is uploaded
+        </span>
+        <button class="ghost theme-btn" :title="`Theme: ${theme}`" @click="cycleTheme">{{ themeLabel }}</button>
+      </div>
     </header>
 
     <div class="body">
@@ -164,7 +290,21 @@ onMounted(async () => {
         <div v-if="loadError" class="load-error">
           Could not reach the backend.<br /><small>{{ loadError }}</small>
         </div>
-        <nav v-if="favoriteTools.length" class="group">
+
+        <div class="search-wrap">
+          <input
+            ref="searchBox"
+            v-model="query"
+            class="search"
+            type="search"
+            placeholder="Filter tools ( / )"
+            spellcheck="false"
+            autocomplete="off"
+            aria-label="Filter tools"
+          />
+        </div>
+
+        <nav v-if="favoriteTools.length && !query.trim()" class="group">
           <div class="group-title">Favorites</div>
           <div
             v-for="(t, i) in favoriteTools"
@@ -188,7 +328,7 @@ onMounted(async () => {
           </div>
         </nav>
 
-        <nav v-for="group in grouped" :key="group.category" class="group">
+        <nav v-for="group in filteredGrouped" :key="group.category" class="group">
           <div class="group-title">{{ group.category }}</div>
           <div
             v-for="t in group.items"
@@ -206,6 +346,10 @@ onMounted(async () => {
             >{{ isFavorite(t.name) ? '★' : '☆' }}</button>
           </div>
         </nav>
+
+        <div v-if="query.trim() && !filteredGrouped.length" class="no-match">
+          No tools match “{{ query.trim() }}”.
+        </div>
       </aside>
 
       <main class="content">
@@ -215,14 +359,23 @@ onMounted(async () => {
             <p>{{ activeTool.description }}</p>
           </div>
 
-          <div class="card input-card">
+          <div
+            class="card input-card"
+            :class="{ 'drag-over': dragOver }"
+            @dragover.prevent="dragOver = true"
+            @dragleave="dragOver = false"
+            @drop.prevent="onFileDrop"
+          >
             <div class="label-row">
               <label>{{ ui?.inputLabel }}</label>
-              <button v-if="ui?.sample" class="ghost" @click="fillSample">Use sample</button>
+              <div class="label-actions">
+                <button v-if="inputValue" class="ghost subtle" @click="clearInput">Clear</button>
+                <button v-if="ui?.sample" class="ghost" @click="fillSample">Use sample</button>
+              </div>
             </div>
             <textarea
               v-model="inputValue"
-              :placeholder="ui?.placeholder"
+              :placeholder="ui?.placeholder + '\n(or drop a file here — binary becomes Base64)'"
               spellcheck="false"
               autocapitalize="off"
               autocomplete="off"
@@ -234,6 +387,21 @@ onMounted(async () => {
                 <select v-if="c.type === 'select'" v-model="controlValues[c.key]">
                   <option v-for="o in c.options" :key="o.value" :value="o.value">{{ o.label }}</option>
                 </select>
+                <div v-else-if="c.type === 'password'" class="pw">
+                  <input
+                    v-model="controlValues[c.key]"
+                    :type="revealed[c.key] ? 'text' : 'password'"
+                    :placeholder="c.placeholder"
+                    spellcheck="false"
+                    autocomplete="off"
+                  />
+                  <button
+                    type="button"
+                    class="pw-toggle"
+                    :aria-label="revealed[c.key] ? 'Hide value' : 'Show value'"
+                    @click="revealed[c.key] = !revealed[c.key]"
+                  >{{ revealed[c.key] ? 'Hide' : 'Show' }}</button>
+                </div>
                 <input
                   v-else
                   v-model="controlValues[c.key]"
@@ -248,11 +416,19 @@ onMounted(async () => {
           <div class="result-head">
             <span class="result-title">Result</span>
             <span v-if="loading" class="status">decoding…</span>
-            <button
-              v-if="result && !errorMsg"
-              class="ghost"
-              @click="copyAll"
-            >{{ copied ? 'Copied!' : 'Copy all' }}</button>
+            <div class="result-actions">
+              <template v-if="showTreeButtons">
+                <button class="ghost" @click="setAllTrees('expand')">Expand all</button>
+                <button class="ghost" @click="setAllTrees('collapse')">Collapse all</button>
+              </template>
+              <button
+                class="ghost"
+                :class="{ invisible: !hasResult }"
+                :aria-hidden="!hasResult"
+                :tabindex="hasResult ? 0 : -1"
+                @click="copyAll"
+              >{{ copied ? 'Copied!' : 'Copy all' }}</button>
+            </div>
           </div>
 
           <div v-if="errorMsg" class="card error">{{ errorMsg }}</div>
@@ -288,6 +464,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding: 0 20px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
@@ -299,10 +476,13 @@ onMounted(async () => {
   gap: 8px;
   font-weight: 600;
   font-size: 16px;
+  white-space: nowrap;
 }
-.logo {
-  color: var(--accent);
-  font-size: 18px;
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
 }
 .pill {
   font-size: 12px;
@@ -311,6 +491,13 @@ onMounted(async () => {
   border: 1px solid var(--border);
   padding: 5px 12px;
   border-radius: 980px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.theme-btn {
+  white-space: nowrap;
+  color: var(--text-2);
 }
 .body {
   flex: 1 1 auto;
@@ -325,9 +512,31 @@ onMounted(async () => {
   border-right: 1px solid var(--border);
   background: var(--surface-2);
 }
+.search-wrap {
+  padding: 0 2px 14px;
+}
+.search {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 7px 10px;
+  font-size: 13px;
+  outline: none;
+}
+.search:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.2);
+}
+.no-match {
+  font-size: 12.5px;
+  color: var(--text-2);
+  padding: 4px 10px;
+}
 .load-error {
   font-size: 12px;
-  color: #d70015;
+  color: var(--bad);
   padding: 8px 10px;
   margin-bottom: 12px;
 }
@@ -395,6 +604,7 @@ onMounted(async () => {
   transition: opacity 0.12s ease, color 0.12s ease;
 }
 .nav-row:hover .star,
+.star:focus-visible,
 .star.on {
   opacity: 1;
 }
@@ -434,6 +644,18 @@ onMounted(async () => {
 }
 .input-card {
   margin-bottom: 24px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.input-card.drag-over {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.2);
+}
+.label-actions {
+  display: flex;
+  gap: 8px;
+}
+.ghost.subtle {
+  color: var(--text-2);
 }
 .label-row {
   display: flex;
@@ -494,11 +716,30 @@ input {
   font-size: 14px;
   outline: none;
 }
+.pw {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.pw input {
+  flex: 1;
+  min-width: 0;
+}
+.pw-toggle {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 8px;
+}
 .result-head {
   display: flex;
   align-items: center;
   gap: 12px;
   margin-bottom: 12px;
+  min-height: 30px;
 }
 .result-title {
   font-size: 18px;
@@ -508,8 +749,12 @@ input {
   font-size: 13px;
   color: var(--text-2);
 }
-.ghost {
+.result-actions {
   margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+.ghost {
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--accent);
@@ -521,11 +766,13 @@ input {
 .ghost:hover {
   background: rgba(0, 113, 227, 0.08);
 }
-.label-row .ghost {
-  margin-left: 0;
+/* Reserve the space so the row doesn't shift when the button appears. */
+.ghost.invisible {
+  visibility: hidden;
+  pointer-events: none;
 }
 .error {
-  color: #d70015;
+  color: var(--bad);
   font-family: var(--mono);
   font-size: 13px;
   white-space: pre-wrap;
@@ -542,5 +789,34 @@ input {
   color: var(--text-2);
   font-size: 14px;
   padding: 24px 4px;
+}
+
+@media (max-width: 760px) {
+  .body {
+    flex-direction: column;
+  }
+  .sidebar {
+    width: 100%;
+    max-height: 38vh;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .content {
+    padding: 20px 14px;
+  }
+  .panel-head h1 {
+    font-size: 22px;
+  }
+  .panel-head p {
+    margin-bottom: 16px;
+  }
+  .result-head {
+    flex-wrap: wrap;
+  }
+}
+@media (max-width: 640px) {
+  .pill {
+    display: none;
+  }
 }
 </style>

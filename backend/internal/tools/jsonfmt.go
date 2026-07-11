@@ -10,7 +10,7 @@ import (
 type jsonInput struct {
 	Input  string `json:"input"`
 	Mode   string `json:"mode"`   // beautify | minify | validate
-	Indent int    `json:"indent"` // spaces, default 2
+	Indent flexInt `json:"indent"` // spaces, default 2
 }
 
 func handleJSON(raw json.RawMessage) (any, error) {
@@ -38,7 +38,7 @@ func handleJSON(raw json.RawMessage) (any, error) {
 	if mode == "" {
 		mode = "beautify"
 	}
-	indent := in.Indent
+	indent := int(in.Indent)
 	if indent <= 0 {
 		indent = 2
 	}
@@ -82,8 +82,12 @@ func lineCol(s string, offset int) (int, int) {
 		offset = len(s)
 	}
 	line, col := 1, 1
-	for i := 0; i < offset; i++ {
-		if s[i] == '\n' {
+	// Count runes, not bytes, so columns stay right after multi-byte characters.
+	for i, r := range s {
+		if i >= offset {
+			break
+		}
+		if r == '\n' {
 			line++
 			col = 1
 		} else {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive } from 'vue'
+import { computed, inject, reactive, ref, watch, type Ref } from 'vue'
 import { copyText } from '../clipboard'
 
 const props = defineProps<{ value: unknown }>()
@@ -8,6 +8,11 @@ interface Entry {
   key: string
   val: unknown
 }
+
+// Broadcast from App's "Expand all / Collapse all" buttons; every (recursive)
+// tree instance listens. Null when mounted standalone (e.g. unit tests).
+type TreeControl = { mode: 'expand' | 'collapse'; seq: number }
+const treeControl = inject<Ref<TreeControl | null> | null>('treeControl', null)
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -20,11 +25,31 @@ function entriesOf(v: unknown): Entry[] | null {
   if (isObject(v)) return Object.keys(v).map((key) => ({ key, val: v[key] }))
   return null
 }
+const entries = computed(() => entriesOf(props.value))
 
 // Per-row collapse state; rows start expanded.
 const collapsed = reactive<Record<number, boolean>>({})
 const isOpen = (i: number) => collapsed[i] !== true
 const toggle = (i: number) => (collapsed[i] = isOpen(i))
+function resetCollapsed() {
+  for (const k of Object.keys(collapsed)) delete collapsed[Number(k)]
+}
+
+// A new value means a new result: stale collapse state must not carry over.
+watch(() => props.value, resetCollapsed)
+
+if (treeControl) {
+  watch(treeControl, (c) => {
+    if (!c) return
+    if (c.mode === 'collapse') {
+      entries.value?.forEach((e, i) => {
+        if (isContainer(e.val)) collapsed[i] = true
+      })
+    } else {
+      resetCollapsed()
+    }
+  })
+}
 
 function preview(v: unknown): string {
   if (Array.isArray(v)) return `[ ${v.length} ${v.length === 1 ? 'item' : 'items'} ]`
@@ -45,23 +70,39 @@ function display(v: unknown): string {
 function rawCopy(v: unknown): string {
   return typeof v === 'string' ? v : String(v)
 }
-async function copyVal(v: unknown) {
-  await copyText(rawCopy(v))
+
+const copiedKey = ref<string | null>(null)
+let copiedTimer: ReturnType<typeof setTimeout> | undefined
+async function copyVal(v: unknown, key: string) {
+  if (await copyText(rawCopy(v))) {
+    copiedKey.value = key
+    clearTimeout(copiedTimer)
+    copiedTimer = setTimeout(() => (copiedKey.value = null), 1000)
+  }
 }
 </script>
 
 <template>
   <span
-    v-if="entriesOf(props.value) === null"
+    v-if="entries === null"
     class="leafv"
-    :class="scalarClass(props.value)"
+    :class="[scalarClass(props.value), { copied: copiedKey === 'root' }]"
     title="Click to copy"
-    @click="copyVal(props.value)"
+    @click="copyVal(props.value, 'root')"
     >{{ display(props.value) }}</span
   >
   <ul v-else class="jtree">
-    <li v-for="(e, i) in entriesOf(props.value)!" :key="e.key">
-      <div class="jrow" :class="{ clickable: isContainer(e.val) }" @click="isContainer(e.val) && toggle(i)">
+    <li v-for="(e, i) in entries" :key="e.key">
+      <div
+        class="jrow"
+        :class="{ clickable: isContainer(e.val) }"
+        :role="isContainer(e.val) ? 'button' : undefined"
+        :tabindex="isContainer(e.val) ? 0 : undefined"
+        :aria-expanded="isContainer(e.val) ? isOpen(i) : undefined"
+        @click="isContainer(e.val) && toggle(i)"
+        @keydown.enter.prevent="isContainer(e.val) && toggle(i)"
+        @keydown.space.prevent="isContainer(e.val) && toggle(i)"
+      >
         <span class="tw">{{ isContainer(e.val) ? (isOpen(i) ? '▾' : '▸') : '' }}</span>
         <span class="k">{{ e.key }}</span>
         <template v-if="isContainer(e.val)">
@@ -70,9 +111,9 @@ async function copyVal(v: unknown) {
         <span
           v-else
           class="leafv"
-          :class="scalarClass(e.val)"
+          :class="[scalarClass(e.val), { copied: copiedKey === e.key }]"
           title="Click to copy"
-          @click.stop="copyVal(e.val)"
+          @click.stop="copyVal(e.val, e.key)"
           >{{ display(e.val) }}</span
         >
       </div>
@@ -105,8 +146,13 @@ async function copyVal(v: unknown) {
 .jrow.clickable {
   cursor: pointer;
 }
-.jrow.clickable:hover {
+.jrow.clickable:hover,
+.jrow.clickable:focus-visible {
   background: rgba(0, 113, 227, 0.07);
+}
+.jrow.clickable:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .tw {
   flex: 0 0 0.9em;
@@ -143,8 +189,17 @@ async function copyVal(v: unknown) {
 .leafv:hover {
   background: rgba(0, 113, 227, 0.1);
 }
+.leafv.copied {
+  background: rgba(48, 209, 88, 0.18);
+}
+.leafv.copied::after {
+  content: ' ✓ Copied';
+  font-family: var(--sans);
+  font-size: 10px;
+  color: var(--ok);
+}
 .leafv.str {
-  color: #0a84c4;
+  color: var(--str);
 }
 .leafv.num {
   color: var(--num);

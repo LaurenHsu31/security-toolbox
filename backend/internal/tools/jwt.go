@@ -68,8 +68,14 @@ func handleJWT(raw json.RawMessage) (any, error) {
 	return out, nil
 }
 
+// b64uDecode decodes base64url, tolerating the padding some encoders emit
+// even though RFC 7515 says segments are unpadded.
+func b64uDecode(seg string) ([]byte, error) {
+	return base64.RawURLEncoding.DecodeString(strings.TrimRight(seg, "="))
+}
+
 func decodeJWTSegment(seg string) (map[string]any, error) {
-	b, err := base64.RawURLEncoding.DecodeString(seg)
+	b, err := b64uDecode(seg)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +109,7 @@ func annotateClaims(p map[string]any) map[string]any {
 }
 
 func verifyJWT(alg, signingInput, sigB64, secret, pubPEM string) (bool, error) {
-	sig, err := base64.RawURLEncoding.DecodeString(sigB64)
+	sig, err := b64uDecode(sigB64)
 	if err != nil {
 		return false, fmt.Errorf("signature is not valid base64url: %w", err)
 	}
@@ -132,7 +138,9 @@ func verifyJWT(alg, signingInput, sigB64, secret, pubPEM string) (bool, error) {
 			return false, err
 		}
 		if strings.HasPrefix(alg, "PS") {
-			return rsa.VerifyPSS(pub, h, digest(), sig, &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash, Hash: h}) == nil, nil
+			// Auto-detect the salt length: RFC 7518 mandates salt = hash length,
+			// but verification should accept any salt the signer used.
+			return rsa.VerifyPSS(pub, h, digest(), sig, &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthAuto, Hash: h}) == nil, nil
 		}
 		return rsa.VerifyPKCS1v15(pub, h, digest(), sig) == nil, nil
 

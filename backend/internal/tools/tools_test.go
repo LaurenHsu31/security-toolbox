@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"crypto"
 	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -373,6 +374,145 @@ func TestECDH(t *testing.T) {
 	})
 	if out1["sharedSecretHex"] != out2["sharedSecretHex"] {
 		t.Errorf("ECDH mismatch: %v vs %v", out1["sharedSecretHex"], out2["sharedSecretHex"])
+	}
+}
+
+func TestCBORIndefiniteByteString(t *testing.T) {
+	// (_ h'AABB' h'CC') → 5f 42 aabb 41 cc ff: chunks must concatenate as raw
+	// bytes, not as their "h'…'" display strings.
+	out := run(t, handleCBOR, map[string]any{"input": "5f42aabb41ccff", "inputFormat": "hex"})
+	if out["decoded"] != "h'aabbcc'" {
+		t.Errorf("decoded = %v, want h'aabbcc'", out["decoded"])
+	}
+}
+
+func TestCBORHugeLengthErrors(t *testing.T) {
+	// mt 2 (byte string), ai 27 with length 0xFFFFFFFFFFFFFFFF must error, not
+	// overflow int and panic.
+	if _, err := handleCBOR(mustJSON(t, map[string]any{"input": "5bffffffffffffffff", "inputFormat": "hex"})); err == nil {
+		t.Error("expected error for oversized CBOR length")
+	}
+}
+
+func TestTLVBadLengths(t *testing.T) {
+	if _, err := handleTLV(mustJSON(t, map[string]any{"input": "3080"})); err == nil {
+		t.Error("indefinite length (0x80) should error, not parse as zero length")
+	}
+	if _, err := handleTLV(mustJSON(t, map[string]any{"input": "0485ffffffffff"})); err == nil {
+		t.Error("5-byte length field should error, not overflow")
+	}
+}
+
+func TestAPDULeZeroMeans256(t *testing.T) {
+	out := run(t, handleTLV, map[string]any{"input": "00B0000000", "mode": "apdu-command"})
+	if out["le"].(int) != 256 {
+		t.Errorf("le = %v, want 256 for Le byte 00", out["le"])
+	}
+}
+
+func TestJWTPaddedSegments(t *testing.T) {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"123"}`))
+	signing := header + "." + payload
+	mac := hmac.New(sha256.New, []byte("secret"))
+	mac.Write([]byte(signing))
+	// Padded signature segment (some encoders emit padding despite RFC 7515).
+	sig := base64.URLEncoding.EncodeToString(mac.Sum(nil))
+	if !strings.Contains(sig, "=") {
+		t.Fatal("test setup: expected padded signature")
+	}
+	out := run(t, handleJWT, map[string]any{"token": signing + "." + sig, "secret": "secret"})
+	if s := out["signature"].(map[string]any); s["status"] != "valid" {
+		t.Errorf("expected valid with padded segment, got %v (%v)", s["status"], s["error"])
+	}
+}
+
+func TestJWTPSSAnySaltLength(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"PS256","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"x"}`))
+	signing := header + "." + payload
+	digest := sha256.Sum256([]byte(signing))
+	// Salt length 20 ≠ hash length 32: verification must still accept it.
+	sig, err := rsa.SignPSS(rand.Reader, key, crypto.SHA256, digest[:], &rsa.PSSOptions{SaltLength: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, _ := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	pubPEM := string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
+	token := signing + "." + base64.RawURLEncoding.EncodeToString(sig)
+	out := run(t, handleJWT, map[string]any{"token": token, "publicKey": pubPEM})
+	if s := out["signature"].(map[string]any); s["status"] != "valid" {
+		t.Errorf("expected valid PSS signature, got %v (%v)", s["status"], s["error"])
+	}
+}
+
+func TestDecodeAutoFormats(t *testing.T) {
+	// Unpadded standard base64 containing '+' must not fall through to UTF-8.
+	out := run(t, handleEncode, map[string]any{"input": "+7w", "from": "auto"})
+	if out["hex"] != "fbbc" {
+		t.Errorf("hex = %v, want fbbc (detected %v)", out["hex"], out["detectedInput"])
+	}
+	// 0x-prefixed hex should decode as hex, in auto and explicit modes.
+	out = run(t, handleEncode, map[string]any{"input": "0xDEADbeef", "from": "auto"})
+	if out["hex"] != "deadbeef" {
+		t.Errorf("auto 0x hex = %v", out["hex"])
+	}
+	out = run(t, handleEncode, map[string]any{"input": "0xdeadbeef", "from": "hex"})
+	if out["hex"] != "deadbeef" {
+		t.Errorf("explicit 0x hex = %v", out["hex"])
+	}
+	// Unpadded standard base64 in explicit base64 mode.
+	out = run(t, handleEncode, map[string]any{"input": "aGVsbG8", "from": "base64"})
+	if out["utf8"] != "hello" {
+		t.Errorf("unpadded base64 = %v", out["utf8"])
+	}
+}
+
+func TestNumericFieldsAcceptStrings(t *testing.T) {
+	// The frontend sends every control value as a string ("" when untouched);
+	// numeric fields must tolerate that instead of failing to unmarshal.
+	out := run(t, handleHKDF, map[string]any{
+		"ikm": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+		"salt": "000102030405060708090a0b0c", "info": "f0f1f2f3f4f5f6f7f8f9",
+		"length": "42", "hash": "SHA-256",
+	})
+	if out["length"] != 42 {
+		t.Errorf("length = %v", out["length"])
+	}
+	out = run(t, handleAESGCM, map[string]any{
+		"mode": "decrypt", "key": "00000000000000000000000000000000",
+		"nonce": "000000000000000000000000",
+		"data":  "0388dace60b6a392f328c2b971b2fe78ab6e47d42cec13bdf53a67b21257bddf",
+		"tagLen": "", "tag": "", "aad": "",
+	})
+	if out["authenticated"] != true {
+		t.Errorf("decrypt with string tagLen failed")
+	}
+	out = run(t, handleCMAC, map[string]any{
+		"key": "2b7e151628aed2a6abf7158809cf4f3c", "input": "", "from": "hex", "tagLen": "8",
+	})
+	if out["truncatedTagHex"] != "bb1d6929e9593728" {
+		t.Errorf("truncated tag = %v", out["truncatedTagHex"])
+	}
+	if _, err := handleHKDF(mustJSON(t, map[string]any{"ikm": "0b0b", "length": "abc"})); err == nil {
+		t.Error("expected error for non-numeric length")
+	}
+}
+
+func TestASN1Time(t *testing.T) {
+	der, err := asn1.Marshal(time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := run(t, handleASN1, map[string]any{"input": hex.EncodeToString(der)})
+	tree := out["tree"].([]map[string]any)
+	v, _ := tree[0]["value"].(string)
+	if !strings.Contains(v, "2030-01-02T03:04:05Z") {
+		t.Errorf("UTCTime not interpreted: %v", v)
 	}
 }
 

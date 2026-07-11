@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive } from 'vue'
+import { inject, reactive, ref, watch, type Ref } from 'vue'
 import { copyText } from '../clipboard'
 
 interface Asn1Node {
@@ -13,12 +13,36 @@ interface Asn1Node {
   children?: Asn1Node[]
 }
 
-defineProps<{ nodes: Asn1Node[] }>()
+const props = defineProps<{ nodes: Asn1Node[] }>()
+
+// Broadcast from App's "Expand all / Collapse all" buttons; every (recursive)
+// tree instance listens. Null when mounted standalone (e.g. unit tests).
+type TreeControl = { mode: 'expand' | 'collapse'; seq: number }
+const treeControl = inject<Ref<TreeControl | null> | null>('treeControl', null)
 
 // Per-row collapse state; nodes start expanded.
 const collapsed = reactive<Record<number, boolean>>({})
 const isOpen = (i: number) => collapsed[i] !== true
 const toggle = (i: number) => (collapsed[i] = isOpen(i))
+function resetCollapsed() {
+  for (const k of Object.keys(collapsed)) delete collapsed[Number(k)]
+}
+
+// A new node list means a new result: stale collapse state must not carry over.
+watch(() => props.nodes, resetCollapsed)
+
+if (treeControl) {
+  watch(treeControl, (c) => {
+    if (!c) return
+    if (c.mode === 'collapse') {
+      props.nodes.forEach((n, i) => {
+        if (hasKids(n)) collapsed[i] = true
+      })
+    } else {
+      resetCollapsed()
+    }
+  })
+}
 
 function hasKids(n: Asn1Node): boolean {
   return Array.isArray(n.children) && n.children.length > 0
@@ -38,8 +62,15 @@ function tagClass(n: Asn1Node): string {
   if (t.includes('String') || t === 'UTF8String') return 'str'
   return ''
 }
-async function copy(text: string) {
-  await copyText(text)
+
+const copiedIdx = ref<number | null>(null)
+let copiedTimer: ReturnType<typeof setTimeout> | undefined
+async function copy(text: string, i: number) {
+  if (await copyText(text)) {
+    copiedIdx.value = i
+    clearTimeout(copiedTimer)
+    copiedTimer = setTimeout(() => (copiedIdx.value = null), 1000)
+  }
 }
 </script>
 
@@ -49,16 +80,21 @@ async function copy(text: string) {
       <div
         class="line"
         :class="{ clickable: hasKids(n) }"
+        :role="hasKids(n) ? 'button' : undefined"
+        :tabindex="hasKids(n) ? 0 : undefined"
+        :aria-expanded="hasKids(n) ? isOpen(i) : undefined"
         @click="hasKids(n) && toggle(i)"
+        @keydown.enter.prevent="hasKids(n) && toggle(i)"
+        @keydown.space.prevent="hasKids(n) && toggle(i)"
       >
         <span class="tw">{{ hasKids(n) ? (isOpen(i) ? '▾' : '▸') : '' }}</span>
         <span class="tag" :class="tagClass(n)">{{ n.tagName }}</span>
         <span
           v-if="!hasKids(n) && valueText(n)"
           class="val"
-          :class="{ hex: !interpreted(n) }"
+          :class="{ hex: !interpreted(n), copied: copiedIdx === i }"
           title="Click to copy"
-          @click.stop="copy(valueText(n))"
+          @click.stop="copy(valueText(n), i)"
           >{{ valueText(n) }}</span
         >
         <span v-if="hasKids(n)" class="count">{{ n.children!.length }} item{{ n.children!.length === 1 ? '' : 's' }}</span>
@@ -93,8 +129,13 @@ async function copy(text: string) {
 .line.clickable {
   cursor: pointer;
 }
-.line.clickable:hover {
+.line.clickable:hover,
+.line.clickable:focus-visible {
   background: rgba(0, 113, 227, 0.07);
+}
+.line.clickable:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .tw {
   flex: 0 0 0.9em;
@@ -122,7 +163,7 @@ async function copy(text: string) {
   color: var(--num);
 }
 .tag.str {
-  color: #0a84c4;
+  color: var(--str);
 }
 .val {
   min-width: 0;
@@ -137,6 +178,15 @@ async function copy(text: string) {
 }
 .val:hover {
   background: rgba(0, 113, 227, 0.1);
+}
+.val.copied {
+  background: rgba(48, 209, 88, 0.18);
+}
+.val.copied::after {
+  content: ' ✓ Copied';
+  font-family: var(--sans);
+  font-size: 10px;
+  color: var(--ok);
 }
 .val.hex {
   color: var(--accent);

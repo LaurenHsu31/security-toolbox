@@ -5,6 +5,45 @@
 // trivial to unit-test and plays nicely with Vue reactivity.
 
 const KEY = 'security-toolbox:favorites'
+const THEME_KEY = 'security-toolbox:theme'
+const LAST_TOOL_KEY = 'security-toolbox:last-tool'
+
+export function loadLastTool(): string {
+  try {
+    return localStorage.getItem(LAST_TOOL_KEY) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+export function saveLastTool(name: string): void {
+  try {
+    localStorage.setItem(LAST_TOOL_KEY, name)
+  } catch {
+    /* best-effort */
+  }
+}
+
+export type Theme = 'auto' | 'light' | 'dark'
+
+export function loadTheme(): Theme {
+  try {
+    const t = localStorage.getItem(THEME_KEY)
+    if (t === 'light' || t === 'dark') return t
+  } catch {
+    /* storage unavailable — fall back to auto */
+  }
+  return 'auto'
+}
+
+export function saveTheme(t: Theme): void {
+  try {
+    if (t === 'auto') localStorage.removeItem(THEME_KEY)
+    else localStorage.setItem(THEME_KEY, t)
+  } catch {
+    /* best-effort */
+  }
+}
 
 export function loadFavorites(): string[] {
   try {
