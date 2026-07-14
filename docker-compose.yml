@@ -3,8 +3,10 @@ services:
     build: .
     container_name: security-toolbox
     ports:
-      - "8080:8080"
+      - "8075:8080"
     restart: unless-stopped
     read_only: true
     security_opt:
       - no-new-privileges:true
+    labels:
+      - io.portainer.accesscontrol.public

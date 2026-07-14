@@ -15,7 +15,7 @@ your input.
 
 ```bash
 docker compose up --build
-# then open http://localhost:8080
+# then open http://localhost:8075
 ```
 
 That's the whole thing. The image is a `scratch`-based static binary (a few

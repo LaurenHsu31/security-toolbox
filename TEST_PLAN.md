@@ -71,7 +71,7 @@ feedback shown; invalid JSON shows a line/column error; "Copy all" works.
   end-to-end (it should, since nothing is fetched):
 
   ```bash
-  docker run --rm -p 8080:8080 --network none security-toolbox   # note: use host port mapping caveats
+  docker run --rm -p 8075:8080 --network none security-toolbox   # note: use host port mapping caveats
   ```
 
 - In the browser devtools Network tab, confirm the only requests are to the
@@ -79,7 +79,7 @@ feedback shown; invalid JSON shows a line/column error; "Copy all" works.
 - Verify the CSP header on every response:
 
   ```bash
-  curl -sI http://localhost:8080/ | grep -i content-security-policy
+  curl -sI http://localhost:8075/ | grep -i content-security-policy
   ```
 
 ## 6. Fuzz / robustness (nice to have)
